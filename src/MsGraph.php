@@ -49,17 +49,9 @@ class MsGraph
         return new Tasks();
     }
 
-    /**
-     * Set the base url that all API requests use.
-     * @var string
-     */
-    protected static $baseUrl = 'https://graph.microsoft.com/v1.0/';
+    protected static string $baseUrl = 'https://graph.microsoft.com/v1.0/';
 
-    /**
-     * Set the User model
-     * @var string
-     */
-    protected static $userModel;
+    protected static string $userModel = '';
 
     /**
      * @throws Exception
@@ -198,11 +190,7 @@ class MsGraph
         return $token->access_token;
     }
 
-    /**
-     * @param  $id  - integar id of user
-     * @return object
-     */
-    public function getTokenData($id = null)
+    public function getTokenData(string $id = null): ?MsGraphToken
     {
         $id = $this->getUserId($id);
         return MsGraphToken::where('user_id', $id)->first();
@@ -369,11 +357,7 @@ class MsGraph
         return is_string($string) && is_array(json_decode($string, true)) && (json_last_error() == JSON_ERROR_NONE);
     }
 
-    /**
-     * @param $id
-     * @return int|mixed|string|null
-     */
-    protected function getUserId($id = null)
+    protected function getUserId(string $id = null): ?string
     {
         if ($id === null) {
             $id = auth()->id();
