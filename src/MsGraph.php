@@ -9,7 +9,7 @@ namespace Dcblogdev\MsGraph;
 use Dcblogdev\MsGraph\Events\NewMicrosoft365SignInEvent;
 use Dcblogdev\MsGraph\Models\MsGraphToken;
 use Dcblogdev\MsGraph\Resources\Contacts;
-use Dcblogdev\MsGraph\Resources\Emails;
+use Dcblogdev\MsGraph\Resources\Emails\Emails;
 use Dcblogdev\MsGraph\Resources\Files;
 use Dcblogdev\MsGraph\Resources\Tasks\TaskLists;
 use Dcblogdev\MsGraph\Resources\Tasks\Tasks;
@@ -21,33 +21,42 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Http;
 use League\OAuth2\Client\Provider\Exception\IdentityProviderException;
 use League\OAuth2\Client\Provider\GenericProvider;
+use Microsoft\Graph\Model\User;
+use TestUser;
 
 class MsGraph
 {
     public function contacts()
     {
-        return new Contacts();
+        return new Contacts;
     }
 
     public function emails()
     {
-        return new Emails();
+        return new Emails;
     }
 
     public function files()
     {
-        return new Files();
+        return new Files;
     }
 
-    public function tasklists()
+    public function sites(): Sites
     {
-        return new TaskLists();
+        return new Sites;
+    }
+
+    public function tasklists(): TaskLists
+    {
+        return new TaskLists;
     }
 
     public function tasks()
     {
-        return new Tasks();
+        return new Tasks;
     }
+
+    protected static User|TestUser|null $user = null;
 
     protected static string $baseUrl = 'https://graph.microsoft.com/v1.0/';
 
@@ -76,7 +85,17 @@ class MsGraph
     {
         self::$userModel = $model;
 
-        return new static();
+        return new static;
+    }
+
+    public static function login(User|TestUser|null $user): void
+    {
+        self::$user = $user;
+    }
+
+    public static function getUser(): User|TestUser|null
+    {
+        return self::$user;
     }
 
     /**
@@ -102,10 +121,22 @@ class MsGraph
 
         if (!request()->has('code') && !$this->isConnected($id)) {
             return redirect($provider->getAuthorizationUrl());
-        } elseif (request()->has('code')) {
-            $accessToken = $provider->getAccessToken('authorization_code', ['code' => request('code')]);
-#            dd($accessToken->getValues()['id_token']); #!FLAG!#
-            $response = Http::withToken($accessToken->getToken())->get(self::$baseUrl.'me');
+        }
+
+        if (request()->has('code')) {
+
+            try {
+                $accessToken = $provider->getAccessToken('authorization_code', ['code' => request('code')]);
+            } catch (IdentityProviderException $e) {
+
+                $response = $e->getResponseBody();
+
+                $errorMessage = "{$response['error']} {$response['error_description']}\n".
+                    'Error Code: '.($response['error_codes'][0] ?? 'N/A')."\n".
+                    'More Info: '.($response['error_uri'] ?? 'N/A');
+
+                throw new Exception($errorMessage);
+            }
 
             if (auth()->check()) {
                 $this->storeToken(
@@ -164,8 +195,8 @@ class MsGraph
         $token = $this->getTokenData($id);
         $id    = $this->getUserId($id);
 
-        if ($redirectWhenNotConnected) {
-            if (!$this->isConnected()) {
+        if ($this->getUser() === null && $redirectWhenNotConnected) {
+            if (! $this->isConnected($id)) {
                 return redirect()->away(config('msgraph.redirectUri'));
             }
         }
@@ -197,7 +228,7 @@ class MsGraph
      * @param  $id integer
      * @return object
      */
-    public function storeToken($id_token, $access_token, $refresh_token, $expires, $id, $email)
+    public function storeToken(string $id_token, string $access_token, tring $refresh_token, string $expires, string $id, string $email): MsGraphToken
     {
         return MsGraphToken::updateOrCreate(['user_id' => $id], [
             'user_id'       => $id,
@@ -273,7 +304,7 @@ class MsGraph
         if (in_array($function, $options)) {
             return self::guzzle($function, $path, $data, $headers, $id);
         } else {
-            //request verb is not in the $options array
+            // request verb is not in the $options array
             throw new Exception($function.' is not a valid HTTP Verb');
         }
     }
@@ -332,7 +363,8 @@ class MsGraph
             return $responseObject;
 
         } catch (ClientException $e) {
-            return json_decode(($e->getResponse()->getBody()->getContents()));
+            throw new Exception($e->getMessage());
+            //return json_decode(($e->getResponse()->getBody()->getContents()));
         } catch (Exception $e) {
             throw new Exception($e->getMessage());
         }
@@ -349,6 +381,10 @@ class MsGraph
 
     protected function getUserId(?string $id = null): ?string
     {
+        if ($this->getUser() !== null) {
+            $id = $this->getUser()->id;
+        }
+
         if ($id === null) {
             $id = auth()->id();
         }
@@ -361,15 +397,26 @@ class MsGraph
      */
     protected function getProvider()
     {
-        //set up the provides loaded values from the config
-        return new GenericProvider([
-            'clientId'                => config('msgraph.clientId'),
-            'clientSecret'            => config('msgraph.clientSecret'),
-            'redirectUri'             => config('msgraph.redirectUri'),
-            'urlAuthorize'            => config('msgraph.urlAuthorize'),
-            'urlAccessToken'          => config('msgraph.urlAccessToken'),
-            'urlResourceOwnerDetails' => config('msgraph.urlResourceOwnerDetails'),
-            'scopes'                  => config('msgraph.scopes'),
-        ]);
+        app()->singleton(GenericProvider::class, function () {
+
+            $codeVerifier = bin2hex(random_bytes(32));
+
+            return new GenericProvider([
+                'clientId' => config('msgraph.clientId'),
+                'clientSecret' => config('msgraph.clientSecret'),
+                'redirectUri' => config('msgraph.redirectUri'),
+                'urlAuthorize' => config('msgraph.urlAuthorize'),
+                'urlAccessToken' => config('msgraph.urlAccessToken'),
+                'urlResourceOwnerDetails' => config('msgraph.urlResourceOwnerDetails'),
+                'scopes' => config('msgraph.scopes'),
+                'code_challenge_method' => 'S256',
+                'code_challenge' => rtrim(
+                    strtr(base64_encode(hash('sha256', $codeVerifier, true)), '+/', '-_'), '='
+                ),
+            ]);
+        });
+
+        // You can now resolve GenericProvider from the service container
+        return app(GenericProvider::class);
     }
 }
