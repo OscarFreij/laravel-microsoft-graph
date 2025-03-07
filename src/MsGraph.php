@@ -127,6 +127,7 @@ class MsGraph
 
             try {
                 $accessToken = $provider->getAccessToken('authorization_code', ['code' => request('code')]);
+                $response = Http::withToken($accessToken->getToken())->get(self::$baseUrl.'me');
             } catch (IdentityProviderException $e) {
 
                 $response = $e->getResponseBody();
@@ -137,7 +138,6 @@ class MsGraph
 
                 throw new Exception($errorMessage);
             }
-
             if (auth()->check()) {
                 $this->storeToken(
                     $accessToken->getValues()['id_token'],
@@ -228,7 +228,7 @@ class MsGraph
      * @param  $id integer
      * @return object
      */
-    public function storeToken(string $id_token, string $access_token, tring $refresh_token, string $expires, string $id, string $email): MsGraphToken
+    public function storeToken(string $id_token, string $access_token, string $refresh_token, string $expires, string $id, string $email): MsGraphToken
     {
         return MsGraphToken::updateOrCreate(['user_id' => $id], [
             'user_id'       => $id,
